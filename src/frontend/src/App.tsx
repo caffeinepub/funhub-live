@@ -46,6 +46,7 @@ interface Profile {
   coins: bigint;
   lastDailyReward: bigint;
   isVIP: boolean;
+  isAdmin?: boolean;
 }
 
 interface ChatMessage {
@@ -538,7 +539,7 @@ function fmtCoins(n: number): string {
 // Main App
 // ---------------------------------------------------------------------------
 
-type Tab = "home" | "spins" | "rewards" | "vip" | "chat";
+type Tab = "home" | "spins" | "rewards" | "vip" | "chat" | "admin";
 type GameType =
   | "slots"
   | "blackjack"
@@ -547,7 +548,12 @@ type GameType =
   | "cardflip"
   | null;
 
-const NAV_TABS: { id: Tab; label: string; icon: React.ReactNode }[] = [
+const NAV_TABS: {
+  id: Tab;
+  label: string;
+  icon: React.ReactNode;
+  adminOnly?: boolean;
+}[] = [
   { id: "home", label: "HOME", icon: <Gamepad2 className="h-3.5 w-3.5" /> },
   { id: "spins", label: "DAILY SPINS", icon: <Zap className="h-3.5 w-3.5" /> },
   { id: "rewards", label: "REWARDS", icon: <Gift className="h-3.5 w-3.5" /> },
@@ -556,6 +562,12 @@ const NAV_TABS: { id: Tab; label: string; icon: React.ReactNode }[] = [
     id: "chat",
     label: "LIVE CHAT",
     icon: <MessageCircle className="h-3.5 w-3.5" />,
+  },
+  {
+    id: "admin",
+    label: "ADMIN",
+    icon: <Shield className="h-3.5 w-3.5" />,
+    adminOnly: true,
   },
 ];
 
@@ -572,6 +584,10 @@ export default function App() {
   const [claimingDaily, setClaimingDaily] = useState(false);
   const [purchasingVip, setPurchasingVip] = useState(false);
   const [showPaymentQR, setShowPaymentQR] = useState(false);
+  const [claimingAdmin, setClaimingAdmin] = useState(false);
+  const [grantingVip, setGrantingVip] = useState(false);
+  const [addingCoins, setAddingCoins] = useState(false);
+  const [adminCoinsAmount, setAdminCoinsAmount] = useState("100000");
   const [spinDisabled, setSpinDisabled] = useState(false);
   const [activeGame, setActiveGame] = useState<GameType>(null);
 
@@ -617,6 +633,7 @@ export default function App() {
   const username = profile?.username || "Player";
   const coins = profile ? Number(profile.coins) : 0;
   const isVip = profile?.isVIP ?? false;
+  const isAdmin = (profile as any)?.isAdmin ?? false;
   const canClaim = canClaimDaily(profile);
 
   // ---------- Handlers ----------
@@ -674,7 +691,7 @@ export default function App() {
   };
 
   const handleConfirmPayment = async () => {
-    if (!actor || isVip || purchasingVip) return;
+    if (!actor || purchasingVip) return;
     setShowPaymentQR(false);
     setPurchasingVip(true);
     try {
@@ -691,12 +708,64 @@ export default function App() {
     }
   };
 
+  const handleClaimAdmin = async () => {
+    if (!actor || claimingAdmin) return;
+    setClaimingAdmin(true);
+    try {
+      await (actor as any).claimAdmin();
+      await queryClient.invalidateQueries({ queryKey: ["profile"] });
+      toast.success("👑 Admin access granted!", {
+        description: "You are now the admin of FunHub Live.",
+      });
+    } catch {
+      toast.error("Admin claim failed. Another admin may already exist.");
+    } finally {
+      setClaimingAdmin(false);
+    }
+  };
+
+  const handleGrantVip = async () => {
+    if (!actor || grantingVip || isVip) return;
+    setGrantingVip(true);
+    try {
+      await (actor as any).grantVIP();
+      await queryClient.invalidateQueries({ queryKey: ["profile"] });
+      toast.success("👑 VIP Activated!", {
+        description: "You now have VIP status!",
+      });
+    } catch {
+      toast.error("VIP grant failed. Please try again.");
+    } finally {
+      setGrantingVip(false);
+    }
+  };
+
+  const handleAddCoins = async () => {
+    if (!actor || addingCoins) return;
+    const amount = Number.parseInt(adminCoinsAmount, 10);
+    if (Number.isNaN(amount) || amount <= 0) {
+      toast.error("Enter a valid coin amount.");
+      return;
+    }
+    setAddingCoins(true);
+    try {
+      await (actor as any).addCoins(BigInt(amount));
+      await queryClient.invalidateQueries({ queryKey: ["profile"] });
+      toast.success(`✅ Added ${amount.toLocaleString()} coins!`);
+    } catch {
+      toast.error("Add coins failed. Please try again.");
+    } finally {
+      setAddingCoins(false);
+    }
+  };
+
   // ---------- Section visibility ----------
   const show = {
     hero: tab === "home" || tab === "spins",
     ctaRow: tab === "home" || tab === "spins" || tab === "rewards",
     grid: tab === "home" || tab === "chat",
     vip: tab === "home" || tab === "vip",
+    admin: tab === "admin",
   };
 
   // ---------------------------------------------------------------------------
@@ -914,7 +983,7 @@ export default function App() {
 
                 {/* Desktop nav */}
                 <nav className="hidden md:flex items-center gap-0.5 flex-1 justify-center">
-                  {NAV_TABS.map((t) => (
+                  {NAV_TABS.filter((t) => !t.adminOnly || isAdmin).map((t) => (
                     <button
                       key={t.id}
                       type="button"
@@ -994,7 +1063,7 @@ export default function App() {
 
               {/* Mobile tab bar */}
               <div className="flex md:hidden gap-1 pb-2 overflow-x-auto scrollbar-none">
-                {NAV_TABS.map((t) => (
+                {NAV_TABS.filter((t) => !t.adminOnly || isAdmin).map((t) => (
                   <button
                     key={t.id}
                     type="button"
@@ -1543,6 +1612,219 @@ export default function App() {
                       )}
                     </div>
                   </div>
+                </motion.section>
+              )}
+            </AnimatePresence>
+
+            {/* ── Admin Panel section ───────────────────────────────────── */}
+            <AnimatePresence>
+              {show.admin && (
+                <motion.section
+                  key="admin"
+                  initial={{ opacity: 0, y: 20 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: -20 }}
+                  transition={{ duration: 0.35 }}
+                  className="container mx-auto px-4 py-8 max-w-lg"
+                  data-ocid="admin.section"
+                >
+                  <div className="flex items-center gap-3 mb-6">
+                    <div
+                      className="p-2 rounded-xl"
+                      style={{
+                        background: "rgba(239,68,68,0.15)",
+                        border: "1px solid rgba(239,68,68,0.3)",
+                      }}
+                    >
+                      <Shield
+                        className="h-6 w-6"
+                        style={{ color: "#ef4444" }}
+                      />
+                    </div>
+                    <div>
+                      <h2 className="text-xl font-black text-foreground tracking-wide">
+                        ADMIN PANEL
+                      </h2>
+                      <p className="text-xs text-muted-foreground">
+                        Control center for FunHub Live
+                      </p>
+                    </div>
+                    {isAdmin && (
+                      <span
+                        className="ml-auto px-3 py-1 rounded-full text-xs font-black tracking-widest"
+                        style={{
+                          background: "rgba(239,68,68,0.15)",
+                          color: "#ef4444",
+                          border: "1px solid rgba(239,68,68,0.4)",
+                        }}
+                        data-ocid="admin.success_state"
+                      >
+                        ✓ ADMIN
+                      </span>
+                    )}
+                  </div>
+
+                  {/* Claim Admin */}
+                  <div
+                    className="rounded-2xl p-5 mb-5"
+                    style={{
+                      background: "rgba(30,41,59,0.9)",
+                      border: "1px solid rgba(43,58,85,0.9)",
+                    }}
+                    data-ocid="admin.panel"
+                  >
+                    <h3 className="text-sm font-black text-foreground tracking-widest uppercase mb-1">
+                      Claim Admin Access
+                    </h3>
+                    <p className="text-xs text-muted-foreground mb-1">
+                      First user to claim becomes the admin of this app.
+                    </p>
+                    <p className="text-xs mb-4" style={{ color: "#fbbf24" }}>
+                      ⚡ One-time setup — first claim wins.
+                    </p>
+                    <Button
+                      onClick={handleClaimAdmin}
+                      disabled={claimingAdmin || isAdmin || !actor}
+                      className="w-full py-4 rounded-xl text-sm font-black tracking-widest"
+                      style={{
+                        background: isAdmin
+                          ? "rgba(34,197,94,0.15)"
+                          : "linear-gradient(135deg,#ef4444,#b91c1c)",
+                        color: isAdmin ? "#22c55e" : "#fff",
+                        border: isAdmin
+                          ? "1px solid rgba(34,197,94,0.3)"
+                          : "none",
+                        boxShadow: isAdmin
+                          ? "none"
+                          : "0 0 20px rgba(239,68,68,0.3)",
+                      }}
+                      data-ocid="admin.submit_button"
+                    >
+                      {claimingAdmin ? (
+                        <>
+                          <Loader2 className="mr-2 h-4 w-4 animate-spin" />{" "}
+                          Claiming...
+                        </>
+                      ) : isAdmin ? (
+                        "✅ You Are The Admin"
+                      ) : (
+                        "🛡️ Claim Admin"
+                      )}
+                    </Button>
+                  </div>
+
+                  {/* Admin Controls - only if admin */}
+                  {isAdmin && (
+                    <div className="space-y-4">
+                      {/* Grant VIP */}
+                      <div
+                        className="rounded-2xl p-5"
+                        style={{
+                          background: "rgba(30,41,59,0.9)",
+                          border: "1px solid rgba(251,191,36,0.25)",
+                        }}
+                      >
+                        <h3
+                          className="text-sm font-black tracking-widest uppercase mb-1"
+                          style={{ color: "#fbbf24" }}
+                        >
+                          👑 VIP Status
+                        </h3>
+                        <p className="text-xs text-muted-foreground mb-4">
+                          Current:{" "}
+                          {isVip ? (
+                            <span style={{ color: "#fbbf24" }}>
+                              ✅ VIP Active
+                            </span>
+                          ) : (
+                            "Not VIP"
+                          )}
+                        </p>
+                        <Button
+                          onClick={handleGrantVip}
+                          disabled={grantingVip || isVip || !actor}
+                          className="w-full py-4 rounded-xl text-sm font-black tracking-widest"
+                          style={{
+                            background: isVip
+                              ? "rgba(251,191,36,0.1)"
+                              : "linear-gradient(135deg,#fbbf24,#d97706)",
+                            color: isVip ? "#fbbf24" : "#0f172a",
+                            border: isVip
+                              ? "1px solid rgba(251,191,36,0.3)"
+                              : "none",
+                            boxShadow: isVip
+                              ? "none"
+                              : "0 0 20px rgba(251,191,36,0.3)",
+                          }}
+                          data-ocid="admin.primary_button"
+                        >
+                          {grantingVip ? (
+                            <>
+                              <Loader2 className="mr-2 h-4 w-4 animate-spin" />{" "}
+                              Activating...
+                            </>
+                          ) : isVip ? (
+                            "✅ VIP Already Active"
+                          ) : (
+                            "Grant Myself VIP 👑"
+                          )}
+                        </Button>
+                      </div>
+
+                      {/* Add Coins */}
+                      <div
+                        className="rounded-2xl p-5"
+                        style={{
+                          background: "rgba(30,41,59,0.9)",
+                          border: "1px solid rgba(34,197,94,0.25)",
+                        }}
+                      >
+                        <h3
+                          className="text-sm font-black tracking-widest uppercase mb-1"
+                          style={{ color: "#22c55e" }}
+                        >
+                          💰 Add Coins
+                        </h3>
+                        <p className="text-xs text-muted-foreground mb-4">
+                          Current balance:{" "}
+                          <span style={{ color: "#fbbf24" }}>
+                            {fmtCoins(coins)} coins
+                          </span>
+                        </p>
+                        <div className="flex gap-2">
+                          <Input
+                            type="number"
+                            value={adminCoinsAmount}
+                            onChange={(e) =>
+                              setAdminCoinsAmount(e.target.value)
+                            }
+                            placeholder="Amount"
+                            className="bg-background/50 border-border/60 text-center font-bold"
+                            data-ocid="admin.input"
+                          />
+                          <Button
+                            onClick={handleAddCoins}
+                            disabled={addingCoins || !actor}
+                            className="shrink-0 px-5 rounded-xl font-black"
+                            style={{
+                              background:
+                                "linear-gradient(135deg,#22c55e,#16a34a)",
+                              color: "#0f172a",
+                              border: "none",
+                              boxShadow: "0 0 16px rgba(34,197,94,0.3)",
+                            }}
+                            data-ocid="admin.save_button"
+                          >
+                            {addingCoins ? (
+                              <Loader2 className="h-4 w-4 animate-spin" />
+                            ) : (
+                              "ADD"
+                            )}
+                          </Button>
+                        </div>
+                      </div>
+                    </div>
+                  )}
                 </motion.section>
               )}
             </AnimatePresence>
