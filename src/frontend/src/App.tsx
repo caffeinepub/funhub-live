@@ -3,7 +3,7 @@ import CardFlip from "@/components/games/CardFlip";
 import DiceRoll from "@/components/games/DiceRoll";
 import SlotMachine from "@/components/games/SlotMachine";
 import Tournament from "@/components/games/Tournament";
-import { Avatar, AvatarFallback } from "@/components/ui/avatar";
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -16,7 +16,9 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Toaster } from "@/components/ui/sonner";
+import { Textarea } from "@/components/ui/textarea";
 import { useActor } from "@/hooks/useActor";
+import { useBlobStorage } from "@/hooks/useBlobStorage";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   ChevronRight,
@@ -25,12 +27,15 @@ import {
   Crown,
   Gamepad2,
   Gift,
+  ImageIcon,
   Loader2,
   MessageCircle,
+  Pencil,
   Send,
   Shield,
   Star,
   Trophy,
+  User,
   Zap,
 } from "lucide-react";
 import { AnimatePresence, motion } from "motion/react";
@@ -41,12 +46,15 @@ import { toast } from "sonner";
 // Types
 // ---------------------------------------------------------------------------
 
-interface Profile {
+interface AppProfile {
   username: string;
+  phone: string;
   coins: bigint;
-  lastDailyReward: bigint;
   isVIP: boolean;
-  isAdmin?: boolean;
+  isAdmin: boolean;
+  lastDailyReward: bigint;
+  bio: string;
+  avatarUrl: string;
 }
 
 interface ChatMessage {
@@ -360,13 +368,17 @@ function SpinWheel({ onSpinComplete, disabled }: SpinWheelProps) {
 interface ChatRoomProps {
   actor: ReturnType<typeof useActor>["actor"];
   username: string;
+  userAvatarUrl?: string;
 }
 
-function ChatRoom({ actor, username }: ChatRoomProps) {
+function ChatRoom({ actor, username, userAvatarUrl }: ChatRoomProps) {
   const [messages, setMessages] = useState<ChatMessage[]>(SEED_MESSAGES);
   const [input, setInput] = useState("");
   const [sending, setSending] = useState(false);
+  const [uploadingImg, setUploadingImg] = useState(false);
   const bottomRef = useRef<HTMLDivElement>(null);
+  const imgInputRef = useRef<HTMLInputElement>(null);
+  const { uploadFile, getUrl } = useBlobStorage();
 
   // Poll backend every 3 s
   useEffect(() => {
@@ -383,7 +395,7 @@ function ChatRoom({ actor, username }: ChatRoomProps) {
           const existingKeys = new Set(
             prev.map((m) => `${m.sender}||${m.text}`),
           );
-          const fresh = raw
+          const fresh = (raw as any[])
             .filter(
               (m: { sender: string; text: string }) =>
                 !existingKeys.has(`${m.sender}||${m.text}`),
@@ -408,26 +420,48 @@ function ChatRoom({ actor, username }: ChatRoomProps) {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
 
-  const handleSend = async () => {
-    if (!input.trim() || !actor || sending) return;
-    const text = input.trim();
+  const handleSend = async (imageUrl?: string) => {
+    const isImg = !!imageUrl;
+    const text = isImg ? input.trim() || "📷 Image" : input.trim();
+    if (!text || !actor || sending) return;
     setInput("");
     setSending(true);
     const now = new Date().toLocaleTimeString([], {
       hour: "2-digit",
       minute: "2-digit",
     });
-    // Optimistic
+    // Optimistic: store __IMG__ prefix for image messages
+    const storedText = isImg ? `__IMG__${imageUrl}` : text;
     setMessages((prev) => [
       ...prev,
-      { sender: username || "You", text, time: now },
+      { sender: username || "You", text: storedText, time: now },
     ]);
     try {
-      await actor.sendMessage(text);
+      if (isImg) {
+        await (actor as any).sendMessage("", imageUrl);
+      } else {
+        await (actor as any).sendMessage(text, null);
+      }
     } catch {
       toast.error("Message failed to send");
     } finally {
       setSending(false);
+    }
+  };
+
+  const handleImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file || !actor) return;
+    setUploadingImg(true);
+    try {
+      const blobId = await uploadFile(file);
+      const url = getUrl(blobId);
+      await handleSend(url);
+    } catch {
+      toast.error("Image upload failed");
+    } finally {
+      setUploadingImg(false);
+      if (imgInputRef.current) imgInputRef.current.value = "";
     }
   };
 
@@ -441,6 +475,7 @@ function ChatRoom({ actor, username }: ChatRoomProps) {
         <AnimatePresence initial={false}>
           {messages.map((msg, i) => {
             const hue = (msg.sender.charCodeAt(0) * 53) % 360;
+            const isCurrentUser = msg.sender === username;
             return (
               <motion.div
                 key={`${msg.sender}-${i}`}
@@ -451,6 +486,9 @@ function ChatRoom({ actor, username }: ChatRoomProps) {
                 data-ocid={`chat.item.${i + 1}`}
               >
                 <Avatar className="h-7 w-7 shrink-0">
+                  {isCurrentUser && userAvatarUrl ? (
+                    <AvatarImage src={userAvatarUrl} alt={msg.sender} />
+                  ) : null}
                   <AvatarFallback
                     className="text-xs font-bold"
                     style={{
@@ -473,9 +511,18 @@ function ChatRoom({ actor, username }: ChatRoomProps) {
                       {msg.time}
                     </span>
                   </div>
-                  <p className="text-sm text-foreground/85 break-words leading-snug">
-                    {msg.text}
-                  </p>
+                  {msg.text.startsWith("__IMG__") ? (
+                    <img
+                      src={msg.text.slice(7)}
+                      alt="shared"
+                      className="mt-1.5 rounded-lg object-cover"
+                      style={{ maxWidth: 200, maxHeight: 200 }}
+                    />
+                  ) : (
+                    <p className="text-sm text-foreground/85 break-words leading-snug">
+                      {msg.text}
+                    </p>
+                  )}
                 </div>
               </motion.div>
             );
@@ -487,6 +534,32 @@ function ChatRoom({ actor, username }: ChatRoomProps) {
 
       {/* Input bar */}
       <div className="flex gap-2 mt-3 pt-3 border-t border-border/40">
+        <input
+          ref={imgInputRef}
+          type="file"
+          accept="image/*"
+          className="hidden"
+          onChange={handleImageUpload}
+          data-ocid="chat.upload_button"
+        />
+        <button
+          type="button"
+          onClick={() => imgInputRef.current?.click()}
+          disabled={uploadingImg || !actor}
+          className="shrink-0 w-9 h-9 rounded-lg flex items-center justify-center transition-colors"
+          style={{
+            background: "rgba(34,197,94,0.1)",
+            border: "1px solid rgba(34,197,94,0.25)",
+            color: "#22c55e",
+          }}
+          data-ocid="chat.dropzone"
+        >
+          {uploadingImg ? (
+            <Loader2 className="h-4 w-4 animate-spin" />
+          ) : (
+            <ImageIcon className="h-4 w-4" />
+          )}
+        </button>
         <Input
           value={input}
           onChange={(e) => setInput(e.target.value)}
@@ -496,7 +569,7 @@ function ChatRoom({ actor, username }: ChatRoomProps) {
           data-ocid="chat.input"
         />
         <Button
-          onClick={handleSend}
+          onClick={() => handleSend()}
           disabled={!input.trim() || sending || !actor}
           size="icon"
           className="shrink-0"
@@ -521,7 +594,7 @@ function ChatRoom({ actor, username }: ChatRoomProps) {
 // Helpers
 // ---------------------------------------------------------------------------
 
-function canClaimDaily(profile: Profile | null | undefined): boolean {
+function canClaimDaily(profile: AppProfile | null | undefined): boolean {
   if (!profile) return false;
   if (profile.lastDailyReward === 0n) return true;
   const nowNs = BigInt(Date.now()) * 1_000_000n;
@@ -539,7 +612,7 @@ function fmtCoins(n: number): string {
 // Main App
 // ---------------------------------------------------------------------------
 
-type Tab = "home" | "spins" | "rewards" | "vip" | "chat" | "admin";
+type Tab = "home" | "spins" | "rewards" | "vip" | "chat" | "admin" | "profile";
 type GameType =
   | "slots"
   | "blackjack"
@@ -569,15 +642,22 @@ const NAV_TABS: {
     icon: <Shield className="h-3.5 w-3.5" />,
     adminOnly: true,
   },
+  {
+    id: "profile",
+    label: "PROFILE",
+    icon: <User className="h-3.5 w-3.5" />,
+  },
 ];
 
 export default function App() {
   const { actor, isFetching } = useActor();
   const queryClient = useQueryClient();
+  const { uploadFile, getUrl } = useBlobStorage();
 
   const [tab, setTab] = useState<Tab>("home");
   const [showRegister, setShowRegister] = useState(false);
   const [regName, setRegName] = useState("");
+  const [regPhone, setRegPhone] = useState("");
   const [registering, setRegistering] = useState(false);
   const [spinResult, setSpinResult] = useState<number | null>(null);
   const [showSpinModal, setShowSpinModal] = useState(false);
@@ -588,8 +668,35 @@ export default function App() {
   const [grantingVip, setGrantingVip] = useState(false);
   const [addingCoins, setAddingCoins] = useState(false);
   const [adminCoinsAmount, setAdminCoinsAmount] = useState("100000");
+  const [appStats, setAppStats] = useState<{
+    totalUsers: number;
+    vipCount: number;
+    totalMessages: number;
+  } | null>(null);
+  const [allUsers, setAllUsers] = useState<
+    Array<{
+      principal: string;
+      username: string;
+      coins: number;
+      isVIP: boolean;
+      phone: string;
+    }>
+  >([]);
+  const [loadingUsers, setLoadingUsers] = useState(false);
+  const [userCoinsMap, setUserCoinsMap] = useState<Record<string, string>>({});
+  const [grantingVIPToUser, setGrantingVIPToUser] = useState<string | null>(
+    null,
+  );
+  const [addingCoinsToUser, setAddingCoinsToUser] = useState<string | null>(
+    null,
+  );
+  const [clearingChat, setClearingChat] = useState(false);
   const [spinDisabled, setSpinDisabled] = useState(false);
   const [activeGame, setActiveGame] = useState<GameType>(null);
+  const [profileBio, setProfileBio] = useState("");
+  const [profileAvatarUrl, setProfileAvatarUrl] = useState("");
+  const [savingProfile, setSavingProfile] = useState(false);
+  const profileImgRef = useRef<HTMLInputElement>(null);
 
   // Countdown timer state
   const [countdown, setCountdown] = useState({ h: 4, m: 31, s: 15 });
@@ -612,12 +719,12 @@ export default function App() {
 
   // ---------- Profile query ----------
   const { data: profile, isLoading: profileLoading } = useQuery<
-    Profile | undefined
+    AppProfile | undefined
   >({
     queryKey: ["profile"],
     queryFn: async () => {
       if (!actor) return undefined;
-      return actor.getProfile();
+      return actor.getProfile() as unknown as AppProfile;
     },
     enabled: !!actor && !isFetching,
     refetchInterval: 15_000,
@@ -633,18 +740,33 @@ export default function App() {
   const username = profile?.username || "Player";
   const coins = profile ? Number(profile.coins) : 0;
   const isVip = profile?.isVIP ?? false;
-  const isAdmin = (profile as any)?.isAdmin ?? false;
+  const isAdmin = profile?.isAdmin ?? false;
   const canClaim = canClaimDaily(profile);
+
+  // Sync local bio/avatar from profile when loaded
+  // biome-ignore lint/correctness/useExhaustiveDependencies: intentional sync on profile load
+  useEffect(() => {
+    if (profile) {
+      setProfileBio(profile.bio || "");
+      setProfileAvatarUrl(profile.avatarUrl || "");
+    }
+  }, [profile?.bio, profile?.avatarUrl]);
 
   // ---------- Handlers ----------
   const handleRegister = async () => {
     if (!actor || !regName.trim()) return;
     setRegistering(true);
     try {
-      await actor.registerUser(regName.trim());
+      await (actor as any).registerUser(regName.trim(), regPhone.trim());
       await queryClient.invalidateQueries({ queryKey: ["profile"] });
       setShowRegister(false);
-      toast.success(`Welcome, ${regName.trim()}! 🎉 You start with 100 coins!`);
+      if (regPhone.trim() === "9022892295") {
+        toast.success("Welcome Admin! 👑 You have been granted admin access!");
+      } else {
+        toast.success(
+          `Welcome, ${regName.trim()}! 🎉 You start with 100 coins!`,
+        );
+      }
     } catch {
       toast.error("Registration failed. Please try again.");
     } finally {
@@ -759,6 +881,106 @@ export default function App() {
     }
   };
 
+  const handleLoadAdminData = async () => {
+    if (!actor || !isAdmin) return;
+    setLoadingUsers(true);
+    try {
+      const [stats, users] = await Promise.all([
+        (actor as any).getAppStats(),
+        (actor as any).getAllUsers(),
+      ]);
+      setAppStats({
+        totalUsers: Number(stats.totalUsers),
+        vipCount: Number(stats.vipCount),
+        totalMessages: Number(stats.totalMessages),
+      });
+      setAllUsers(
+        users.map((u: any) => ({
+          principal: u.principal,
+          username: u.username || "(no name)",
+          coins: Number(u.coins),
+          isVIP: u.isVIP,
+        })),
+      );
+    } catch {
+      toast.error("Failed to load admin data");
+    } finally {
+      setLoadingUsers(false);
+    }
+  };
+
+  const handleGrantVIPToUser = async (principal: string) => {
+    if (!actor) return;
+    setGrantingVIPToUser(principal);
+    try {
+      await (actor as any).grantVIPToUser(principal);
+      toast.success("VIP granted!");
+      handleLoadAdminData();
+    } catch {
+      toast.error("Failed to grant VIP");
+    } finally {
+      setGrantingVIPToUser(null);
+    }
+  };
+
+  const handleAddCoinsToUser = async (principal: string) => {
+    if (!actor) return;
+    const amount = Number.parseInt(userCoinsMap[principal] || "1000", 10);
+    if (Number.isNaN(amount) || amount <= 0) return;
+    setAddingCoinsToUser(principal);
+    try {
+      await (actor as any).addCoinsToUser(principal, BigInt(amount));
+      toast.success(`${amount} coins added!`);
+      handleLoadAdminData();
+    } catch {
+      toast.error("Failed to add coins");
+    } finally {
+      setAddingCoinsToUser(null);
+    }
+  };
+
+  const handleClearChat = async () => {
+    if (!actor) return;
+    setClearingChat(true);
+    try {
+      await (actor as any).clearMessages();
+      toast.success("Chat cleared!");
+      if (appStats) setAppStats({ ...appStats, totalMessages: 0 });
+    } catch {
+      toast.error("Failed to clear chat");
+    } finally {
+      setClearingChat(false);
+    }
+  };
+
+  // Load admin data on mount when admin
+  useEffect(() => {
+    if (!isAdmin || !actor) return;
+    setLoadingUsers(true);
+    Promise.all([(actor as any).getAppStats(), (actor as any).getAllUsers()])
+      .then(([stats, users]) => {
+        setAppStats({
+          totalUsers: Number(stats.totalUsers),
+          vipCount: Number(stats.vipCount),
+          totalMessages: Number(stats.totalMessages),
+        });
+        setAllUsers(
+          users.map((u: any) => ({
+            principal: u.principal,
+            username: u.username || "(no name)",
+            coins: Number(u.coins),
+            isVIP: u.isVIP,
+          })),
+        );
+      })
+      .catch(() => {
+        toast.error("Failed to load admin data");
+      })
+      .finally(() => {
+        setLoadingUsers(false);
+      });
+  }, [isAdmin, actor]);
+
   // ---------- Section visibility ----------
   const show = {
     hero: tab === "home" || tab === "spins",
@@ -766,6 +988,7 @@ export default function App() {
     grid: tab === "home" || tab === "chat",
     vip: tab === "home" || tab === "vip",
     admin: tab === "admin",
+    profile: tab === "profile",
   };
 
   // ---------------------------------------------------------------------------
@@ -820,9 +1043,26 @@ export default function App() {
               autoFocus
               data-ocid="register.input"
             />
+            <Input
+              placeholder="Mobile number (10 digits)"
+              type="tel"
+              maxLength={10}
+              value={regPhone}
+              onChange={(e) =>
+                setRegPhone(e.target.value.replace(/[^0-9]/g, ""))
+              }
+              onKeyDown={(e) => e.key === "Enter" && handleRegister()}
+              className="bg-background/50 border-border/60 text-center text-base"
+              data-ocid="register.phone_input"
+            />
+            <p className="text-xs text-muted-foreground text-center">
+              Enter your 10-digit mobile number
+            </p>
             <Button
               onClick={handleRegister}
-              disabled={!regName.trim() || registering}
+              disabled={
+                !regName.trim() || regPhone.trim().length !== 10 || registering
+              }
               className="w-full py-5 text-base rounded-xl"
               style={{
                 background: "linear-gradient(135deg,#22c55e,#16a34a)",
@@ -915,10 +1155,39 @@ export default function App() {
                 data-ocid="payment.qr_code"
               />
             </div>
+            <div className="flex flex-col gap-2 w-full">
+              <p className="text-xs text-gray-400 text-center mb-1">
+                Ya seedha app se pay karo:
+              </p>
+              <a
+                href="phonepe://pay?pa=9022892295@ibl&pn=FunHub%20VIP&am=199&cu=INR"
+                className="w-full py-3 rounded-xl font-black text-sm text-center text-white bg-[#5f259f] hover:bg-[#7b2fcf] transition-all flex items-center justify-center gap-2"
+              >
+                💜 PhonePe se Pay karo
+              </a>
+              <a
+                href="paytmmp://pay?pa=9022892295@ibl&pn=FunHub%20VIP&am=199&cu=INR"
+                className="w-full py-3 rounded-xl font-black text-sm text-center text-white bg-[#002970] hover:bg-[#003fa0] transition-all flex items-center justify-center gap-2"
+              >
+                💙 Paytm se Pay karo
+              </a>
+              <a
+                href="tez://upi/pay?pa=9022892295@ibl&pn=FunHub%20VIP&am=199&cu=INR"
+                className="w-full py-3 rounded-xl font-black text-sm text-center text-white bg-[#1a73e8] hover:bg-[#1558b0] transition-all flex items-center justify-center gap-2"
+              >
+                🔵 GPay se Pay karo
+              </a>
+              <a
+                href="upi://pay?pa=9022892295@ibl&pn=FunHub%20VIP&am=199&cu=INR"
+                className="w-full py-3 rounded-xl font-black text-sm text-center text-white bg-gray-700 hover:bg-gray-600 transition-all flex items-center justify-center gap-2"
+              >
+                📱 Koi bhi UPI App
+              </a>
+            </div>
             <p className="text-xs text-gray-400 text-center">
-              After payment, click{" "}
+              Payment ke baad{" "}
               <span className="text-yellow-400 font-semibold">"I've Paid"</span>{" "}
-              to activate VIP
+              dabao VIP activate karne ke liye
             </p>
           </div>
           <DialogFooter className="flex flex-col gap-2 sm:flex-col">
@@ -1041,9 +1310,14 @@ export default function App() {
                   {/* Avatar */}
                   <div className="flex items-center gap-1.5">
                     <Avatar
-                      className="h-8 w-8"
+                      className="h-8 w-8 cursor-pointer"
                       style={{ border: "1.5px solid rgba(34,197,94,0.4)" }}
+                      onClick={() => setTab("profile")}
+                      data-ocid="header.profile.button"
                     >
+                      {profile?.avatarUrl ? (
+                        <AvatarImage src={profile.avatarUrl} alt={username} />
+                      ) : null}
                       <AvatarFallback
                         className="text-xs font-bold"
                         style={{
@@ -1467,7 +1741,11 @@ export default function App() {
                       </span>
                     </div>
                     <div className="flex-1" style={{ minHeight: 0 }}>
-                      <ChatRoom actor={actor} username={username} />
+                      <ChatRoom
+                        actor={actor}
+                        username={username}
+                        userAvatarUrl={profile?.avatarUrl}
+                      />
                     </div>
                   </div>
                 </motion.div>
@@ -1823,8 +2101,538 @@ export default function App() {
                           </Button>
                         </div>
                       </div>
+
+                      {/* App Stats */}
+                      <div className="mt-4 space-y-2">
+                        <div className="flex items-center justify-between mb-3">
+                          <h3
+                            className="text-sm font-black tracking-widest uppercase"
+                            style={{ color: "#60a5fa" }}
+                          >
+                            📊 App Statistics
+                          </h3>
+                          <button
+                            type="button"
+                            onClick={handleLoadAdminData}
+                            disabled={loadingUsers}
+                            className="px-3 py-1 rounded-lg text-xs font-bold flex items-center gap-1"
+                            style={{
+                              background: "rgba(96,165,250,0.15)",
+                              color: "#60a5fa",
+                              border: "1px solid rgba(96,165,250,0.3)",
+                            }}
+                            data-ocid="admin.secondary_button"
+                          >
+                            {loadingUsers ? (
+                              <Loader2 className="h-3 w-3 animate-spin" />
+                            ) : (
+                              "↻"
+                            )}{" "}
+                            Refresh
+                          </button>
+                        </div>
+                        <div className="grid grid-cols-3 gap-2">
+                          <div
+                            className="rounded-xl p-3 text-center"
+                            style={{
+                              background: "rgba(30,41,59,0.9)",
+                              border: "1px solid rgba(96,165,250,0.2)",
+                            }}
+                          >
+                            <div
+                              className="text-xl font-black"
+                              style={{ color: "#60a5fa" }}
+                            >
+                              {appStats?.totalUsers ?? "—"}
+                            </div>
+                            <div className="text-xs text-muted-foreground mt-1">
+                              Users
+                            </div>
+                          </div>
+                          <div
+                            className="rounded-xl p-3 text-center"
+                            style={{
+                              background: "rgba(30,41,59,0.9)",
+                              border: "1px solid rgba(251,191,36,0.2)",
+                            }}
+                          >
+                            <div
+                              className="text-xl font-black"
+                              style={{ color: "#fbbf24" }}
+                            >
+                              {appStats?.vipCount ?? "—"}
+                            </div>
+                            <div className="text-xs text-muted-foreground mt-1">
+                              VIP
+                            </div>
+                          </div>
+                          <div
+                            className="rounded-xl p-3 text-center"
+                            style={{
+                              background: "rgba(30,41,59,0.9)",
+                              border: "1px solid rgba(167,139,250,0.2)",
+                            }}
+                          >
+                            <div
+                              className="text-xl font-black"
+                              style={{ color: "#a78bfa" }}
+                            >
+                              {appStats?.totalMessages ?? "—"}
+                            </div>
+                            <div className="text-xs text-muted-foreground mt-1">
+                              Messages
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* User Management */}
+                      <div
+                        className="rounded-2xl p-5"
+                        style={{
+                          background: "rgba(30,41,59,0.9)",
+                          border: "1px solid rgba(96,165,250,0.25)",
+                        }}
+                      >
+                        <h3
+                          className="text-sm font-black tracking-widest uppercase mb-3"
+                          style={{ color: "#60a5fa" }}
+                        >
+                          👥 User Management
+                        </h3>
+                        {allUsers.length === 0 ? (
+                          <div
+                            className="text-center py-4"
+                            data-ocid="admin.empty_state"
+                          >
+                            <p className="text-xs text-muted-foreground mb-2">
+                              No users loaded yet.
+                            </p>
+                            <button
+                              type="button"
+                              onClick={handleLoadAdminData}
+                              className="text-xs font-bold px-3 py-1 rounded-lg"
+                              style={{
+                                background: "rgba(96,165,250,0.15)",
+                                color: "#60a5fa",
+                              }}
+                            >
+                              Load Users
+                            </button>
+                          </div>
+                        ) : (
+                          <div className="space-y-3">
+                            {allUsers.map((user, idx) => (
+                              <div
+                                key={user.principal}
+                                className="rounded-xl p-3"
+                                style={{
+                                  background: "rgba(15,23,42,0.6)",
+                                  border: "1px solid rgba(43,58,85,0.8)",
+                                }}
+                                data-ocid={`admin.item.${idx + 1}`}
+                              >
+                                <div className="flex items-center justify-between mb-2">
+                                  <div className="flex items-center gap-2">
+                                    <span className="text-sm font-bold text-foreground">
+                                      {user.username}
+                                      {user.phone ? (
+                                        <span className="text-xs text-muted-foreground ml-1">
+                                          ({user.phone})
+                                        </span>
+                                      ) : null}
+                                    </span>
+                                    {user.isVIP && (
+                                      <Crown
+                                        className="h-3 w-3"
+                                        style={{ color: "#fbbf24" }}
+                                      />
+                                    )}
+                                  </div>
+                                  <span
+                                    className="text-xs font-black px-2 py-0.5 rounded-full"
+                                    style={{
+                                      background: "rgba(251,191,36,0.15)",
+                                      color: "#fbbf24",
+                                    }}
+                                  >
+                                    🪙 {user.coins.toLocaleString()}
+                                  </span>
+                                </div>
+                                <div className="text-xs text-muted-foreground mb-2 font-mono truncate">
+                                  {user.principal.slice(0, 24)}...
+                                </div>
+                                <div className="flex gap-2">
+                                  <button
+                                    type="button"
+                                    onClick={() =>
+                                      handleGrantVIPToUser(user.principal)
+                                    }
+                                    disabled={
+                                      user.isVIP ||
+                                      grantingVIPToUser === user.principal
+                                    }
+                                    className="text-xs font-bold px-2 py-1 rounded-lg flex items-center gap-1 shrink-0"
+                                    style={{
+                                      background: user.isVIP
+                                        ? "rgba(251,191,36,0.1)"
+                                        : "linear-gradient(135deg,#fbbf24,#d97706)",
+                                      color: user.isVIP ? "#fbbf24" : "#0f172a",
+                                      border: user.isVIP
+                                        ? "1px solid rgba(251,191,36,0.3)"
+                                        : "none",
+                                      opacity: user.isVIP ? 0.6 : 1,
+                                    }}
+                                    data-ocid={`admin.toggle.${idx + 1}`}
+                                  >
+                                    {grantingVIPToUser === user.principal ? (
+                                      <Loader2 className="h-3 w-3 animate-spin" />
+                                    ) : (
+                                      <Crown className="h-3 w-3" />
+                                    )}
+                                    {user.isVIP ? "VIP" : "Grant VIP"}
+                                  </button>
+                                  <Input
+                                    type="number"
+                                    placeholder="1000"
+                                    value={userCoinsMap[user.principal] || ""}
+                                    onChange={(e) =>
+                                      setUserCoinsMap((m) => ({
+                                        ...m,
+                                        [user.principal]: e.target.value,
+                                      }))
+                                    }
+                                    className="bg-background/50 border-border/60 text-center text-xs font-bold h-7"
+                                    data-ocid={`admin.input.${idx + 1}`}
+                                  />
+                                  <button
+                                    type="button"
+                                    onClick={() =>
+                                      handleAddCoinsToUser(user.principal)
+                                    }
+                                    disabled={
+                                      addingCoinsToUser === user.principal
+                                    }
+                                    className="text-xs font-bold px-2 py-1 rounded-lg shrink-0"
+                                    style={{
+                                      background:
+                                        "linear-gradient(135deg,#22c55e,#16a34a)",
+                                      color: "#0f172a",
+                                    }}
+                                    data-ocid={`admin.save_button.${idx + 1}`}
+                                  >
+                                    {addingCoinsToUser === user.principal ? (
+                                      <Loader2 className="h-3 w-3 animate-spin" />
+                                    ) : (
+                                      "+Coins"
+                                    )}
+                                  </button>
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+
+                      {/* Danger Zone */}
+                      <div
+                        className="rounded-2xl p-5"
+                        style={{
+                          background: "rgba(30,41,59,0.9)",
+                          border: "1px solid rgba(239,68,68,0.4)",
+                        }}
+                      >
+                        <h3
+                          className="text-sm font-black tracking-widest uppercase mb-1"
+                          style={{ color: "#ef4444" }}
+                        >
+                          ⚠️ Danger Zone
+                        </h3>
+                        <p className="text-xs text-muted-foreground mb-4">
+                          Destructive actions — use with caution.
+                        </p>
+                        <button
+                          type="button"
+                          onClick={handleClearChat}
+                          disabled={clearingChat}
+                          className="w-full py-3 rounded-xl text-sm font-black tracking-widest flex items-center justify-center gap-2"
+                          style={{
+                            background:
+                              "linear-gradient(135deg,#ef4444,#b91c1c)",
+                            color: "#fff",
+                            boxShadow: "0 0 16px rgba(239,68,68,0.3)",
+                            border: "none",
+                          }}
+                          data-ocid="admin.delete_button"
+                        >
+                          {clearingChat ? (
+                            <Loader2 className="h-4 w-4 animate-spin" />
+                          ) : (
+                            "🗑️"
+                          )}{" "}
+                          Clear All Chat Messages
+                        </button>
+                      </div>
                     </div>
                   )}
+                </motion.section>
+              )}
+            </AnimatePresence>
+
+            {/* ── Profile Tab ──────────────────────────────────────────── */}
+            <AnimatePresence mode="wait">
+              {show.profile && (
+                <motion.section
+                  key="profile"
+                  initial={{ opacity: 0, y: 20 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: -12 }}
+                  transition={{ duration: 0.35 }}
+                  className="container mx-auto px-4 py-8 max-w-lg"
+                  data-ocid="profile.section"
+                >
+                  <div className="flex items-center gap-3 mb-6">
+                    <div
+                      className="p-2 rounded-xl"
+                      style={{
+                        background: "rgba(34,197,94,0.12)",
+                        border: "1px solid rgba(34,197,94,0.2)",
+                      }}
+                    >
+                      <User className="h-5 w-5" style={{ color: "#22c55e" }} />
+                    </div>
+                    <div>
+                      <h2 className="text-xl font-black uppercase tracking-widest text-foreground">
+                        My Profile
+                      </h2>
+                      <p className="text-xs text-muted-foreground">
+                        Apna profile customize karo
+                      </p>
+                    </div>
+                  </div>
+
+                  <div
+                    className="rounded-2xl p-6 space-y-6"
+                    style={{
+                      background: "#1e293b",
+                      border: "1px solid rgba(43,58,85,0.8)",
+                    }}
+                  >
+                    {/* Avatar */}
+                    <div className="flex flex-col items-center gap-3">
+                      <div className="relative">
+                        <Avatar
+                          className="h-24 w-24 cursor-pointer"
+                          style={{ border: "3px solid rgba(34,197,94,0.4)" }}
+                          onClick={() => profileImgRef.current?.click()}
+                          data-ocid="profile.upload_button"
+                        >
+                          {profileAvatarUrl ? (
+                            <AvatarImage
+                              src={profileAvatarUrl}
+                              alt={username}
+                            />
+                          ) : null}
+                          <AvatarFallback
+                            className="text-2xl font-black"
+                            style={{
+                              background: "rgba(34,197,94,0.15)",
+                              color: "#22c55e",
+                            }}
+                          >
+                            {username[0]?.toUpperCase() ?? "?"}
+                          </AvatarFallback>
+                        </Avatar>
+                        <button
+                          type="button"
+                          className="absolute bottom-0 right-0 w-7 h-7 rounded-full flex items-center justify-center cursor-pointer"
+                          style={{
+                            background:
+                              "linear-gradient(135deg,#22c55e,#16a34a)",
+                            border: "2px solid #1e293b",
+                          }}
+                          onClick={() => profileImgRef.current?.click()}
+                        >
+                          <Pencil className="h-3.5 w-3.5 text-[#0f172a]" />
+                        </button>
+                      </div>
+                      <input
+                        ref={profileImgRef}
+                        type="file"
+                        accept="image/*"
+                        className="hidden"
+                        onChange={async (e) => {
+                          const file = e.target.files?.[0];
+                          if (!file) return;
+                          try {
+                            toast.info("Uploading photo...");
+                            const blobId = await uploadFile(file);
+                            const url = getUrl(blobId);
+                            setProfileAvatarUrl(url);
+                            toast.success(
+                              "Photo uploaded! Save profile to keep it.",
+                            );
+                          } catch {
+                            toast.error("Photo upload failed");
+                          }
+                          if (e.target) e.target.value = "";
+                        }}
+                        data-ocid="profile.dropzone"
+                      />
+                      <div className="text-center">
+                        <p className="font-black text-lg text-foreground">
+                          {username}
+                        </p>
+                        <div className="flex flex-wrap justify-center gap-2 mt-2">
+                          {isVip && (
+                            <span
+                              className="inline-flex items-center gap-1.5 text-xs font-black px-3 py-1 rounded-full"
+                              style={{
+                                background:
+                                  "linear-gradient(135deg, rgba(251,191,36,0.25), rgba(245,158,11,0.15))",
+                                color: "#fbbf24",
+                                border: "1.5px solid rgba(251,191,36,0.5)",
+                                boxShadow: "0 0 12px rgba(251,191,36,0.2)",
+                                textShadow: "0 0 8px rgba(251,191,36,0.4)",
+                              }}
+                            >
+                              👑 VIP Member
+                            </span>
+                          )}
+                          {isAdmin && (
+                            <span
+                              className="inline-flex items-center gap-1.5 text-xs font-black px-3 py-1 rounded-full"
+                              style={{
+                                background:
+                                  "linear-gradient(135deg, rgba(167,139,250,0.25), rgba(139,92,246,0.15))",
+                                color: "#c4b5fd",
+                                border: "1.5px solid rgba(167,139,250,0.5)",
+                                boxShadow: "0 0 12px rgba(139,92,246,0.25)",
+                                textShadow: "0 0 8px rgba(167,139,250,0.4)",
+                              }}
+                            >
+                              💎 Founder
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Coins */}
+                    <div
+                      className="flex items-center justify-between px-4 py-3 rounded-xl"
+                      style={{
+                        background: "rgba(251,191,36,0.07)",
+                        border: "1px solid rgba(251,191,36,0.2)",
+                      }}
+                    >
+                      <span className="text-sm font-bold text-muted-foreground flex items-center gap-2">
+                        <Coins
+                          className="h-4 w-4"
+                          style={{ color: "#fbbf24" }}
+                        />{" "}
+                        Coins Balance
+                      </span>
+                      <span
+                        className="font-black text-lg"
+                        style={{ color: "#fbbf24" }}
+                      >
+                        {fmtCoins(coins)}
+                      </span>
+                    </div>
+
+                    {/* Bio */}
+                    <div className="space-y-2">
+                      <label
+                        htmlFor="profile-bio"
+                        className="text-xs font-bold uppercase tracking-widest text-muted-foreground"
+                      >
+                        Bio / About Me
+                      </label>
+                      <div className="relative">
+                        <Textarea
+                          value={profileBio}
+                          onChange={(e) =>
+                            setProfileBio(e.target.value.slice(0, 150))
+                          }
+                          id="profile-bio"
+                          placeholder="Apne baare mein kuch likho... (max 150 chars)"
+                          className="bg-background/60 border-border/50 text-sm resize-none"
+                          rows={3}
+                          maxLength={150}
+                          data-ocid="profile.textarea"
+                        />
+                        <span
+                          className="absolute bottom-2 right-3 text-[10px]"
+                          style={{
+                            color:
+                              profileBio.length >= 140 ? "#ef4444" : "#64748b",
+                          }}
+                        >
+                          {profileBio.length}/150
+                        </span>
+                      </div>
+                    </div>
+
+                    {/* Avatar URL manual input */}
+                    <div className="space-y-2">
+                      <label
+                        htmlFor="profile-avatar-url"
+                        className="text-xs font-bold uppercase tracking-widest text-muted-foreground"
+                      >
+                        Profile Photo URL (optional)
+                      </label>
+                      <div className="flex gap-2">
+                        <Input
+                          value={profileAvatarUrl}
+                          onChange={(e) => setProfileAvatarUrl(e.target.value)}
+                          id="profile-avatar-url"
+                          placeholder="https://... ya upar se photo upload karo"
+                          className="flex-1 bg-background/60 border-border/50 text-sm"
+                          data-ocid="profile.input"
+                        />
+                      </div>
+                    </div>
+
+                    {/* Save button */}
+                    <Button
+                      onClick={async () => {
+                        if (!actor) return;
+                        setSavingProfile(true);
+                        try {
+                          await (actor as any).updateProfile(
+                            profileBio,
+                            profileAvatarUrl,
+                          );
+                          await queryClient.invalidateQueries({
+                            queryKey: ["profile"],
+                          });
+                          toast.success("Profile saved! ✅");
+                        } catch {
+                          toast.error("Profile save failed");
+                        } finally {
+                          setSavingProfile(false);
+                        }
+                      }}
+                      disabled={savingProfile || !actor}
+                      className="w-full font-black tracking-widest"
+                      style={{
+                        background: "linear-gradient(135deg,#22c55e,#16a34a)",
+                        color: "#0f172a",
+                        border: "none",
+                      }}
+                      data-ocid="profile.save_button"
+                    >
+                      {savingProfile ? (
+                        <>
+                          <Loader2 className="h-4 w-4 animate-spin mr-2" />{" "}
+                          Saving...
+                        </>
+                      ) : (
+                        "💾 Save Profile"
+                      )}
+                    </Button>
+                  </div>
                 </motion.section>
               )}
             </AnimatePresence>
