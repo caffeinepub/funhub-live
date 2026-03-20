@@ -1,0 +1,123 @@
+@import url("https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&display=swap");
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --radius: 0.75rem;
+
+    /* FunHub Dark Theme — always dark */
+    --background: 0.161 0.037 257; /* #0f172a navy */
+    --foreground: 0.968 0.006 257; /* #f1f5f9 */
+    --card: 0.239 0.034 257; /* #1e293b dark slate */
+    --card-foreground: 0.968 0.006 257;
+    --popover: 0.239 0.034 257;
+    --popover-foreground: 0.968 0.006 257;
+    --primary: 0.694 0.22 142; /* #22c55e green */
+    --primary-foreground: 0.161 0.037 257;
+    --secondary: 0.298 0.039 257; /* #2b3a55 */
+    --secondary-foreground: 0.968 0.006 257;
+    --muted: 0.239 0.034 257;
+    --muted-foreground: 0.657 0.038 257; /* #94a3b8 */
+    --accent: 0.819 0.17 84; /* #fbbf24 gold */
+    --accent-foreground: 0.161 0.037 257;
+    --destructive: 0.65 0.24 27;
+    --destructive-foreground: 0.968 0.006 257;
+    --border: 0.298 0.039 257; /* #2b3a55 */
+    --input: 0.298 0.039 257;
+    --ring: 0.694 0.22 142;
+    --chart-1: 0.694 0.22 142;
+    --chart-2: 0.582 0.21 259;
+    --chart-3: 0.819 0.17 84;
+    --chart-4: 0.65 0.2 27;
+    --chart-5: 0.73 0.18 303;
+    --sidebar: 0.239 0.034 257;
+    --sidebar-foreground: 0.968 0.006 257;
+    --sidebar-primary: 0.694 0.22 142;
+    --sidebar-primary-foreground: 0.161 0.037 257;
+    --sidebar-accent: 0.298 0.039 257;
+    --sidebar-accent-foreground: 0.968 0.006 257;
+    --sidebar-border: 0.298 0.039 257;
+    --sidebar-ring: 0.694 0.22 142;
+
+    /* Custom tokens */
+    --coin: 0.819 0.17 84; /* gold */
+    --hero-teal: 0.79 0.17 162; /* #34d399 */
+    --green-hover: 0.581 0.185 142; /* #16a34a */
+  }
+
+  /* Force dark mode everywhere */
+  html {
+    color-scheme: dark;
+  }
+
+  * {
+    @apply border-border;
+  }
+
+  body {
+    @apply bg-background text-foreground;
+    font-family: "Plus Jakarta Sans", sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+}
+
+@layer utilities {
+  .scrollbar-none {
+    scrollbar-width: none;
+  }
+  .scrollbar-none::-webkit-scrollbar {
+    display: none;
+  }
+
+  .glow-green {
+    box-shadow: 0 0 20px rgba(34, 197, 94, 0.35), 0 0 40px
+      rgba(34, 197, 94, 0.15);
+  }
+
+  .glow-gold {
+    box-shadow: 0 0 16px rgba(251, 191, 36, 0.35);
+  }
+
+  .card-surface {
+    background: #1e293b;
+    border: 1px solid rgba(43, 58, 85, 0.8);
+  }
+
+  .btn-green {
+    background: linear-gradient(135deg, #22c55e, #16a34a);
+    box-shadow: 0 0 20px rgba(34, 197, 94, 0.35);
+    color: #0f172a;
+    font-weight: 800;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    transition: all 0.2s ease;
+  }
+
+  .btn-green:hover:not(:disabled) {
+    box-shadow: 0 0 30px rgba(34, 197, 94, 0.55);
+    transform: translateY(-1px);
+  }
+
+  .btn-green:disabled {
+    opacity: 0.5;
+    box-shadow: none;
+  }
+
+  .btn-gold {
+    background: linear-gradient(135deg, #fbbf24, #d97706);
+    box-shadow: 0 0 20px rgba(251, 191, 36, 0.3);
+    color: #0f172a;
+    font-weight: 800;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    transition: all 0.2s ease;
+  }
+
+  .btn-gold:hover:not(:disabled) {
+    box-shadow: 0 0 30px rgba(251, 191, 36, 0.5);
+    transform: translateY(-1px);
+  }
+}
