@@ -10,6 +10,7 @@ import {
   Dialog,
   DialogContent,
   DialogDescription,
+  DialogFooter,
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
@@ -479,6 +480,7 @@ function ChatRoom({ actor, username }: ChatRoomProps) {
             );
           })}
         </AnimatePresence>
+
         <div ref={bottomRef} />
       </div>
 
@@ -569,6 +571,7 @@ export default function App() {
   const [showSpinModal, setShowSpinModal] = useState(false);
   const [claimingDaily, setClaimingDaily] = useState(false);
   const [purchasingVip, setPurchasingVip] = useState(false);
+  const [showPaymentQR, setShowPaymentQR] = useState(false);
   const [spinDisabled, setSpinDisabled] = useState(false);
   const [activeGame, setActiveGame] = useState<GameType>(null);
 
@@ -667,6 +670,12 @@ export default function App() {
 
   const handlePurchaseVip = async () => {
     if (!actor || isVip || purchasingVip) return;
+    setShowPaymentQR(true);
+  };
+
+  const handleConfirmPayment = async () => {
+    if (!actor || isVip || purchasingVip) return;
+    setShowPaymentQR(false);
     setPurchasingVip(true);
     try {
       await actor.purchaseVIP();
@@ -816,6 +825,56 @@ export default function App() {
           </Dialog>
         )}
       </AnimatePresence>
+
+      {/* PhonePe QR Payment Modal */}
+      <Dialog open={showPaymentQR} onOpenChange={setShowPaymentQR}>
+        <DialogContent className="bg-gray-900 border border-purple-500/40 text-white max-w-sm mx-auto">
+          <DialogHeader>
+            <DialogTitle className="text-xl font-black text-center text-yellow-400">
+              💳 Pay via PhonePe / UPI
+            </DialogTitle>
+            <DialogDescription className="text-center text-gray-300 text-sm">
+              Scan the QR code below to complete your VIP purchase
+            </DialogDescription>
+          </DialogHeader>
+          <div className="flex flex-col items-center gap-4 py-2">
+            <div className="rounded-xl overflow-hidden border-2 border-purple-400/60 shadow-lg shadow-purple-500/20">
+              <img
+                src="/assets/uploads/Screenshot_20260320_085315-1.jpg"
+                alt="PhonePe QR Code"
+                className="w-64 h-64 object-contain bg-white"
+                data-ocid="payment.qr_code"
+              />
+            </div>
+            <p className="text-xs text-gray-400 text-center">
+              After payment, click{" "}
+              <span className="text-yellow-400 font-semibold">"I've Paid"</span>{" "}
+              to activate VIP
+            </p>
+          </div>
+          <DialogFooter className="flex flex-col gap-2 sm:flex-col">
+            <button
+              type="button"
+              onClick={handleConfirmPayment}
+              disabled={purchasingVip}
+              data-ocid="payment.confirm_button"
+              className="w-full py-3 rounded-xl font-black text-sm bg-gradient-to-r from-yellow-400 to-orange-500 text-black hover:from-yellow-300 hover:to-orange-400 transition-all disabled:opacity-50"
+            >
+              {purchasingVip
+                ? "Activating VIP..."
+                : "✅ I've Paid - Activate VIP"}
+            </button>
+            <button
+              type="button"
+              onClick={() => setShowPaymentQR(false)}
+              data-ocid="payment.cancel_button"
+              className="w-full py-3 rounded-xl font-bold text-sm bg-gray-800 text-gray-300 hover:bg-gray-700 transition-all border border-gray-600"
+            >
+              Cancel
+            </button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {activeGame === null && (
         <>
